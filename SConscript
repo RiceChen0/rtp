@@ -4,15 +4,16 @@ from building import *
 cwd     = GetCurrentDir()
 CPPPATH = [cwd, str(Dir('#'))]
 src     = Split("""
-core/source/tp_manage.c
-adapter/source/cmsis/tp_thread_adapter.c
-adapter/source/cmsis/tp_mutex_adapter.c
-adapter/source/cmsis/tp_sem_adapter.c
+src/rthread_pool.c
+platform/rtthread/pf_task_adapter.c
+platform/rtthread/pf_mutex_adapter.c
+platform/rtthread/pf_sem_adapter.c
+platform/rtthread/pf_event_adapter.c
 """)
 
-CPPPATH += ['core/include']
-CPPPATH += ['adapter/include']
+CPPPATH = [cwd + '/include']
+CPPPATH += [cwd + '/platform']
 
-group = DefineGroup('tp', src, depend = [''], CPPPATH = CPPPATH)
+group = DefineGroup('rthread_pool', src, depend = [''], CPPPATH = CPPPATH)
 
 Return('group')

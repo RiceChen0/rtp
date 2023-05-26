@@ -24,15 +24,15 @@
 
 - 作者最近在开发的过程中，也遇到多线程编程问题，跨平台，并发任务多，执行周期短。如果按照以往的反复的创建/销毁线程，显然不是一个很好的软件设计。我们需要利用线程池的方式来解决我们问题。
 
-# TP(Thread Pool)组件
+# RTP(Thread Pool)组件
 
-TP组件，又称线程池组件。是作者编写一个多线程管理组件，特点：
+RTP组件，又称线程池组件。是作者编写一个多线程管理组件，特点：
 
 1. 跨平台：它支持任意的RTOS系统，Linux系统。
 2. 易移植：该组件默认支持CMSIS和POSIX接口，其他RTOS可以轻易适配兼容。
 3. 接口简单：用户操作接口简单，只有三个接口：创建线程池，增加task到线程池，销毁线程池。
 
-## TP原理
+## RTP原理
 
 ![](https://ricechen0.gitee.io/picture/thread_pool/1.png)
 
@@ -41,322 +41,25 @@ TP组件，又称线程池组件。是作者编写一个多线程管理组件，
 - ③ 应用层创建的Task，会被挂在Task队列中。
 - ④ 线程池的空闲线程，会检测Task队列中是否为空，如果Task队列不为空，则提取一个Task在线程中执行。
 
-## TP实现
-
-### 适配层实现
-
-为了实现跨平台，需要将差异性接口抽象出来，我们整个组件需要抽象几个内容：①日志接口；②内存管理接口；③ 线程接口；④互斥量接口；⑤信号量接口。以CMSIS接口为例的实现：
-
-1. 错误码：提供了四种错误码：无错误，错误，内存不足，无效参数。
-
-``` C
-typedef enum{
-    TP_EOK = 0,         // There is no error
-    TP_ERROR,           // A generic error happens
-    TP_ENOMEM,          // No memory
-    TP_EINVAL,          // Invalid argument
-} TpErrCode;
-```
-
-2. 日志接口适配：
-
-- 需修改宏定义：TP_PRINT；
-- 支持三个等级日志打印：错误信息日志，运行信息日志，调试信息日志的打印。并且支持带颜色。
-
-``` C
-#define TP_PRINT        printf
-
-#define TP_LOGE(...)    TP_PRINT("\033[31;22m[E/TP](%s:%d) ", __FUNCTION__, __LINE__);  \
-                        TP_PRINT(__VA_ARGS__);                                          \
-                        TP_PRINT("\033[0m\n")
-#define TP_LOGI(...)    TP_PRINT("\033[32;22m[I/TP](%s:%d) ", __FUNCTION__, __LINE__);  \
-                        TP_PRINT(__VA_ARGS__);                                          \
-                        TP_PRINT("\033[0m\n")
-#define TP_LOGD(...)    TP_PRINT("[D/TP](%s:%d) ", __FUNCTION__, __LINE__);             \
-                        TP_PRINT(__VA_ARGS__);                                          \
-                        TP_PRINT("\n")
-```
-
-3. 内存接口：只需适配申请内存和释放内存宏定义
-
-``` C
-#define TP_MALLOC       malloc     
-#define TP_FREE         free
-```
-
-4. 线程接口：
-
-``` C
-// tp_def.h
-typedef void *TpThreadId;
-
-typedef void *(*tpThreadFunc)(void *argv);
-
-typedef struct {
-    char *name;
-    uint32_t stackSize;
-    uint32_t priority : 8;
-    uint32_t reserver : 24;
-} TpThreadAttr;
-
-TpThreadId TpThreadCreate(tpThreadFunc func, void *argv, const TpThreadAttr *attr);
-void TpThreadDelete(TpThreadId thread);
-```
-
-- 创建线程: TpThreadId TpThreadCreate(tpThreadFunc func, void *argv, const TpThreadAttr *attr);
-
-| **参数** | **说明**                         |
-| -------- | -------------------------------- |
-| func     | 线程入口函数                     |
-| argv     | 线程入口函数参数                 |
-| attr     | 线程属性：线程名，栈空间，优先级 |
-| **返回** | --                               |
-| NULL     | 创建失败                         |
-| 线程句柄 | 创建成功                         |
-
-- 删除线程：void TpThreadDelete(TpThreadId thread);
-
-| **参数** | **说明** |
-| -------- | -------- |
-| thread   | 线程句柄 |
-
-- CMSIS适配：
-
-``` C
-// tp_threa_adapter.c
-#include "tp_def.h"
-#include "cmsis_os2.h"
-
-TpThreadId TpThreadCreate(tpThreadFunc func, void *argv, const TpThreadAttr *attr)
-{
-    osThreadId_t thread = NULL;
-    osThreadAttr_t taskAttr = {
-        .name = attr->name,
-        .attr_bits = 0,
-        .cb_mem = NULL,
-        .cb_size = 0,
-        .stack_mem = NULL,
-        .stack_size = attr->stackSize,
-        .priority = (osPriority_t)attr->priority,
-        .tz_module = 0,
-        .reserved = 0,
-    };
-
-    thread = osThreadNew((osThreadFunc_t)func, argv, &taskAttr);
-    return (TpThreadId)thread;
-}
-
-void TpThreadDelete(TpThreadId thread)
-{
-    if(thread != NULL) {
-        osThreadTerminate(thread);
-    }
-}
-```
-
-5. 互斥量接口：
-
-``` C
-// tp_def.h
-typedef void *TpMutexId;
-
-TpMutexId TpMutexCreate(void);
-TpErrCode TpMutexLock(TpMutexId mutex);
-TpErrCode TpMutexUnlock(TpMutexId mutex);
-void TpMutexDelete(TpMutexId mutex);
-```
-
-- 创建互斥量：TpMutexId TpMutexCreate(void);
-
-| **参数**   | **说明** |
-| ---------- | -------- |
-| **返回**   | --       |
-| NULL       | 创建失败 |
-| 互斥量句柄 | 创建成功 |
-
-- 获取互斥量：TpErrCode TpMutexLock(TpMutexId mutex);
-
-| **参数**  | **说明**       |
-| --------- | -------------- |
-| mutex     | 互斥量句柄     |
-| **返回**  | --             |
-| TP_EINVAL | mutex无效参数  |
-| TP_ERROR  | 获取互斥量失败 |
-| TP_EOK    | 成功获取互斥量 |
-
-- 释放互斥量：TpErrCode TpMutexUnlock(TpMutexId mutex);
-
-| **参数**  | **说明**       |
-| --------- | -------------- |
-| mutex     | 互斥量句柄     |
-| **返回**  | --             |
-| TP_EINVAL | mutex无效参数  |
-| TP_ERROR  | 释放互斥量失败 |
-| TP_EOK    | 成功释放互斥量 |
-
-- 删除互斥量：void TpMutexDelete(TpMutexId mutex);
-
-| **参数** | **说明**   |
-| -------- | ---------- |
-| mutex    | 互斥量句柄 |
-
-- CMSIS适配：
-
-``` C
-// tp_mutex_adapter.c
-#include "tp_def.h"
-#include "cmsis_os2.h"
-
-TpMutexId TpMutexCreate(void)
-{
-    osMutexId_t mutex = NULL;
-    mutex = osMutexNew(NULL);
-
-    return (TpMutexId)mutex;
-}
-
-TpErrCode TpMutexLock(TpMutexId mutex)
-{
-    if (mutex == NULL) {
-        return TP_EINVAL;
-    }
-    if(osMutexAcquire((osMutexId_t)mutex, osWaitForever) == osOK) {
-        return TP_EOK;
-    }
-    return TP_ERROR;
-}
-
-TpErrCode TpMutexUnlock(TpMutexId mutex)
-{
-    if (mutex == NULL) {
-        return TP_EINVAL;
-    }
-    if(osMutexRelease((osMutexId_t)mutex) == osOK) {
-        return TP_EOK;
-    }
-    return TP_ERROR;
-}
-
-void TpMutexDelete(TpMutexId mutex)
-{
-    if (mutex == NULL) {
-        return;
-    }
-    osMutexDelete(mutex);
-}
-```
-
-6. 信号量接口：
-
-``` C
-// tp_def.h
-typedef void *TpSemId;
-
-TpSemId TpSemCreate(uint32_t value);
-TpErrCode TpSemAcquire(TpSemId sem);
-TpErrCode TpSemRelease(TpSemId sem);
-void TpSemDelete(TpSemId sem);
-```
-
-- 创建信号量：TpSemId TpSemCreate(uint32_t value);
-
-| **参数**   | **说明** |
-| ---------- | -------- |
-| **返回**   | --       |
-| NULL       | 创建失败 |
-| 信号量句柄 | 创建成功 |
-
-- 获取信号量：TpErrCode TpSemAcquire(TpSemId sem);
-
-| **参数**  | **说明**       |
-| --------- | -------------- |
-| sem       | 信号量句柄     |
-| **返回**  | --             |
-| TP_EINVAL | sem无效参数    |
-| TP_ERROR  | 获取信号量失败 |
-| TP_EOK    | 成功获取信号量 |
-
-- 释放信号量：TpErrCode TpSemRelease(TpSemId sem);
-
-| **参数**  | **说明**       |
-| --------- | -------------- |
-| sem       | 信号量句柄     |
-| **返回**  | --             |
-| TP_EINVAL | 信号量无效参数 |
-| TP_ERROR  | 释放信号量失败 |
-| TP_EOK    | 成功释放信号量 |
-
-- 删除信号量：void TpSemDelete(TpSemId sem);
-
-| **参数** | **说明**   |
-| -------- | ---------- |
-| sem      | 信号量句柄 |
-
-- CMSIS适配：
-
-``` C
-// tp_sem_adapter.c
-#include "tp_def.h"
-#include "cmsis_os2.h"
-
-TpSemId TpSemCreate(uint32_t value)
-{
-    osSemaphoreId_t sem = NULL;
-    sem = osSemaphoreNew(1, value, NULL);
-
-    return (TpSemId)sem;
-}
-
-TpErrCode TpSemAcquire(TpSemId sem)
-{
-    if (sem == NULL) {
-        return TP_EINVAL;
-    }
-    if(osSemaphoreAcquire((osSemaphoreId_t)sem, osWaitForever) != osOK) {
-        return TP_ERROR;
-    }
-    return TP_EOK;
-}
-
-TpErrCode TpSemRelease(TpSemId sem)
-{
-    if (sem == NULL) {
-        return TP_EINVAL;
-    }
-    if(osSemaphoreRelease((osSemaphoreId_t)sem) != osOK) {
-        return TP_ERROR;
-    }
-    return TP_EOK;
-}
-
-void TpSemDelete(TpSemId sem)
-{
-    if (sem == NULL) {
-        return;
-    }
-    osSemaphoreDelete((osSemaphoreId_t)sem);
-}
-```
-
-### 核心层实现
+## 核心层实现
 
 tp的提供的接口非常精简：创建线程池，增加任务到线程池，销毁线程池。
 
 1. 创建线程池：
 
-- 接口描述：TpErrCode TpCreate(Tp *pool, const char *name, uint32_t stackSize, uint8_t threadNum);
+- 接口描述：pf_err_t rtp_create(rtp *pool, const char *name, uint32_t stackSize, uint8_t threadNum);
 
 | **参数**  | **说明**             |
 | --------- | -------------------- |
 | pool      | 线程池句柄           |
 | name      | 线程池中线程名字     |
-| stackSize | 线程池中线程的栈大小 |
-| theadNum  | 线程池中线程数目     |
+| stack_size | 线程池中线程的栈大小 |
+| thead_num  | 线程池中线程数目     |
 | **返回**  | --                   |
-| TP_EINVAL | pool无效参数         |
-| TP_ERROR  | 创建失败             |
-| TP_NOMEM  | 内存不足             |
-| TP_EOK    | 创建成功             |
+| PF_EINVAL | pool无效参数         |
+| PF_ERROR  | 创建失败             |
+| PF_NOMEM  | 内存不足             |
+| PF_EOK    | 创建成功             |
 
 - 接口实现：
   - ①创建task队列增删互斥量：管理task队列的增加及释放的互斥关系，保证增加和释放为同步策略。
@@ -364,52 +67,50 @@ tp的提供的接口非常精简：创建线程池，增加任务到线程池，
   - ③创建线程池中线程：根据threadNum参数，创建对应的线程数目。
 
 ``` C
-TpErrCode TpCreate(Tp *pool, const char *name, 
-                   uint32_t stackSize, uint8_t threadNum)
+pf_err_t rtp_create(rtp *pool, const char *name, 
+                   uint32_t stack_size, uint8_t thread_num)
 {
     int index = 0;
     if(pool == NULL) {
-        TP_LOGE("Thread pool handle is NULL");
-        return TP_EINVAL;
+        PF_LOGE("Thread pool handle is NULL");
+        return PF_EINVAL;
     }
-    // ①
-    if((pool->queueLock = TpMutexCreate()) == NULL) {
-        TP_LOGE("Create thread pool mutex failed");
-        return TP_ERROR;
+
+    if((pool->queue_lock = pf_mutex_create()) == NULL) {
+        PF_LOGE("Create thread pool mutex failed");
+        return PF_ERROR;
     }
-    // ②
-    if((pool->queueReady = TpSemCreate(0)) == NULL) {
-        TP_LOGE("Create thread pool sem failed");
-        return TP_ERROR;
+    if((pool->queue_ready = pf_sem_create(0)) == NULL) {
+        PF_LOGE("Create thread pool sem failed");
+        return PF_ERROR;
     }
-    pool->taskQueue = NULL;
-    pool->threadNum = threadNum;
-    pool->waitTaskNum = 0;
-    pool->threads = (TpThreadInfo *)TP_MALLOC(threadNum * sizeof(TpThreadInfo));
+    pool->task_queue = NULL;
+    pool->thread_num = thread_num;
+    pool->wait_task_num = 0;
+    pool->threads = (rtp_thread_info *)PF_MALLOC(thread_num * sizeof(rtp_thread_info));
     if(pool->threads == NULL) {
-        TP_LOGE("Malloc thread pool info memory failed");
-        return TP_ENOMEM;
+        PF_LOGE("Malloc thread pool info memory failed");
+        return PF_ENOMEM;
     }
-    // ③
-    for(index = 0; index < threadNum; index++) {
-        pool->threads[index].attr.name = (char *)TP_MALLOC(TP_THREAD_NAME_LEN);
+    for(index = 0; index < thread_num; index++) {
+        pool->threads[index].attr.name = (char *)PF_MALLOC(RPF_NAME_LEN);
         if(pool->threads[index].attr.name == NULL) {
-            TP_LOGE("Malloc thread name memory failed");
-            return TP_ENOMEM;
+            PF_LOGE("Malloc thread name memory failed");
+            return PF_ENOMEM;
         }
-        snprintf(pool->threads[index].attr.name, TP_THREAD_NAME_LEN, "%s%d", name, index);
-        pool->threads[index].attr.stackSize = stackSize;
-        pool->threads[index].attr.priority = TP_THREAD_PRIORITY;
-        pool->threads[index].threadId = TpThreadCreate(TpThreadHandler, pool, &pool->threads[index].attr);
+        snprintf(pool->threads[index].attr.name, RPF_NAME_LEN, "%s%d", name, index);
+        pool->threads[index].attr.stack_size = stack_size;
+        pool->threads[index].attr.priority = RPF_PRIORITY;
+        pool->threads[index].thread_id = pf_task_create(rtp_handler, pool, &pool->threads[index].attr);
         
     }
-    return TP_EOK;
+    return PF_EOK;
 }
 ```
 
 2. 增加任务到线程池：
 
-- 接口描述：TpErrCode TpAddTask(Tp *pool, taskHandle handle, void *argv);
+- 接口描述：pf_err_t rtp_add_task(rtp *pool, task_handle handle, void *argv);
 
 | **参数**  | **说明**             |
 | --------- | -------------------- |
@@ -417,9 +118,9 @@ TpErrCode TpCreate(Tp *pool, const char *name,
 | handle    | 线程池中线程名字     |
 | argv      | 线程池中线程的栈大小 |
 | **返回**  | --                   |
-| TP_EINVAL | pool无效参数         |
-| TP_NOMEM  | 内存不足             |
-| TP_EOK    | 增加task成功         |
+| PF_EINVAL | pool无效参数         |
+| PF_NOMEM  | 内存不足             |
+| PF_EOK    | 增加task成功         |
 
 - 接口实现：
   - ① 创建一个task句柄，并将注册task函数和函数的入参。
@@ -427,54 +128,53 @@ TpErrCode TpCreate(Tp *pool, const char *name,
   - ③ 释放task信号量，通知线程池中的线程可以从task队列中获取task执行
 
 ``` C
-TpErrCode TpAddTask(Tp *pool, taskHandle handle, void *argv)
+pf_err_t rtp_add_task(rtp *pool, task_handle handle, void *argv)
 {
-    TpTask *newTask = NULL;
-    TpTask *taskLIst = NULL;
+    rtp_task *new_task = NULL;
+    rtp_task *task_lIst = NULL;
 
     if(pool == NULL) {
-        TP_LOGE("Thread pool handle is NULL");
-        return TP_EINVAL;
+        PF_LOGE("Thread pool handle is NULL");
+        return PF_EINVAL;
     }
-    // ①
-    newTask = (TpTask *)TP_MALLOC(sizeof(TpTask));
-    if(newTask == NULL) {
-        TP_LOGE("Malloc new task handle memory failed");
-        return TP_ENOMEM;
+
+    new_task = (rtp_task *)PF_MALLOC(sizeof(rtp_task));
+    if(new_task == NULL) {
+        PF_LOGE("Malloc new task handle memory failed");
+        return PF_ENOMEM;
     }
-    newTask->handle = handle;
-    newTask->argv = argv;
-    newTask->next = NULL;
-    // ②
-    TpMutexLock(pool->queueLock);
-    taskLIst = pool->taskQueue;
-    if(taskLIst == NULL) {
-        pool->taskQueue = newTask;
+    new_task->handle = handle;
+    new_task->argv = argv;
+    new_task->next = NULL;
+
+    pf_mutex_lock(pool->queue_lock);
+    task_lIst = pool->task_queue;
+    if(task_lIst == NULL) {
+        pool->task_queue = new_task;
     }
     else {
-        while(taskLIst->next != NULL) {
-            taskLIst = taskLIst->next;
+        while(task_lIst->next != NULL) {
+            task_lIst = task_lIst->next;
         }
-        taskLIst->next = newTask;
+        task_lIst->next = new_task;
     }
-    pool->waitTaskNum++;
-    TpMutexUnlock(pool->queueLock);
-    // ③
-    TpSemRelease(pool->queueReady);
-    return TP_EOK;
+    pool->wait_task_num++;
+    pf_mutex_unlock(pool->queue_lock);
+    pf_sem_unlock(pool->queue_ready);
+    return PF_EOK;
 }
 ```
 
 3. 销毁线程池
 
-- 接口描述：TpErrCode TpDestroy(Tp *pool);
+- 接口描述：pf_err_t rtp_destroy(rtp *pool);
 
 | **参数**  | **说明**     |
 | --------- | ------------ |
 | pool      | 线程池句柄   |
 | **返回**  | --           |
-| TP_EINVAL | pool无效参数 |
-| TP_EOK    | 销毁成功     |
+| PF_EINVAL | pool无效参数 |
+| PF_EOK    | 销毁成功     |
 
 - 接口实现：
   - ① 删除线程池中所有线程。
@@ -482,44 +182,43 @@ TpErrCode TpAddTask(Tp *pool, taskHandle handle, void *argv)
   - ③ 删除线程池的Task队列。
 
 ``` C
-TpErrCode TpDestroy(Tp *pool)
+pf_err_t rtp_destroy(rtp *pool)
 {
     int index = 0;
-    TpTask *head = NULL;
+    rtp_task *head = NULL;
 
     if(pool == NULL) {
-        TP_LOGE("Thread pool handle is NULL");
-        return TP_EINVAL;
+        PF_LOGE("Thread pool handle is NULL");
+        return PF_EINVAL;
     }
-    // ①
-    for(index = 0; index < pool->threadNum; index++) {
-        TpThreadDelete(pool->threads[index].threadId);
-        pool->threads[index].threadId = NULL;
-        TP_FREE(pool->threads[index].attr.name);
+
+    for(index = 0; index < pool->thread_num; index++) {
+        pf_task_delete(pool->threads[index].thread_id);
+        pool->threads[index].thread_id = NULL;
+        PF_FREE(pool->threads[index].attr.name);
         pool->threads[index].attr.name = NULL;
     }
-    // ②
-    TpMutexDelete(pool->queueLock);
-    pool->queueLock = NULL;
-    TpSemDelete(pool->queueReady);
-    pool->queueReady = NULL;
+    pf_mutex_delete(pool->queue_lock);
+    pool->queue_lock = NULL;
+    pf_sem_delete(pool->queue_ready);
+    pool->queue_ready = NULL;
 
-    TP_FREE(pool->threads);
+    PF_FREE(pool->threads);
     pool->threads = NULL;
-    // ③
-    while (pool->taskQueue != NULL) {
-        head = pool->taskQueue;
-        pool->taskQueue = pool->taskQueue->next;
-        TP_FREE(head);
+
+    while (pool->task_queue != NULL) {
+        head = pool->task_queue;
+        pool->task_queue = pool->task_queue->next;
+        PF_FREE(head);
     }
     pool = NULL;
-    return TP_EOK;
+    return PF_EOK;
 }
 ```
 
 4. 线程池中线程函数
 
-- 接口描述：static void *TpThreadHandler(void *argv)
+- 接口描述：static void rtp_handler(void *argv)
 
 | **参数** | **说明**   |
 | -------- | ---------- |
@@ -532,28 +231,24 @@ TpErrCode TpDestroy(Tp *pool)
   - ④ 当task执行完，会将对应的task句柄删除。
 
 ``` C
-static void *TpThreadHandler(void *argv)
+static void rtp_handler(void *argv)
 {
-    Tp *pool = (Tp *)argv;
-    TpTask *task = NULL;
+    rtp *pool = (rtp *)argv;
+    rtp_task *task = NULL;
 
     while(1) {
-        // ①
-        TpMutexLock(pool->queueLock);
-        // ②
-        while(pool->waitTaskNum == 0) {
-            TpMutexUnlock(pool->queueLock);
-            TpSemAcquire(pool->queueReady);
-            TpMutexLock(pool->queueLock);
+        pf_mutex_lock(pool->queue_lock);
+        while(pool->wait_task_num == 0) {
+            pf_mutex_unlock(pool->queue_lock);
+            pf_sem_lock(pool->queue_ready);
+            pf_mutex_lock(pool->queue_lock);
         }
-        // ③
-        task = pool->taskQueue;
-        pool->waitTaskNum--;
-        pool->taskQueue = task->next;
-        TpMutexUnlock(pool->queueLock);
+        task = pool->task_queue;
+        pool->wait_task_num--;
+        pool->task_queue = task->next;
+        pf_mutex_unlock(pool->queue_lock);
         task->handle(task->argv);
-        // ④
-        TP_FREE(task);
+        PF_FREE(task);
         task = NULL;
     }
 }
@@ -567,10 +262,11 @@ static void *TpThreadHandler(void *argv)
 - 在线程池中创建6个task，其中，task参数为taskId。
 
 ``` C
-#include "tp_manage.h"
+#include "rthread_pool.h"
 
-Tp pool;
-void TestTaskHandle(void *argv)
+static rtp pool;
+
+void TestRtpHandle(void *argv)
 {
     printf("%s--taskId: %d\r\n", __FUNCTION__, (uint32_t)argv);
 }
@@ -578,14 +274,14 @@ void TestTaskHandle(void *argv)
 int main(void)
 {
     // ①
-    TpCreate(&pool, "tp", 1024, 3);
+    rtp_create(&pool, "tp", 1024, 3);
     // ②
-    TpAddTask(&pool, TestTaskHandle, (void *)1);
-    TpAddTask(&pool, TestTaskHandle, (void *)2);
-    TpAddTask(&pool, TestTaskHandle, (void *)3);
-    TpAddTask(&pool, TestTaskHandle, (void *)4);
-    TpAddTask(&pool, TestTaskHandle, (void *)5);
-    TpAddTask(&pool, TestTaskHandle, (void *)6);
+    rtp_add_task(&pool, TestRtpHandle, (void *)1);
+    rtp_add_task(&pool, TestRtpHandle, (void *)2);
+    rtp_add_task(&pool, TestRtpHandle, (void *)3);
+    rtp_add_task(&pool, TestRtpHandle, (void *)4);
+    rtp_add_task(&pool, TestRtpHandle, (void *)5);
+    rtp_add_task(&pool, TestRtpHandle, (void *)6);
 
     return 0;
 }
@@ -598,14 +294,3 @@ int main(void)
 3. Linux中POSIX接口运行效果：
 
 ![](https://ricechen0.gitee.io/picture/thread_pool/3.png)
-
-## 总结
-
-1. 线程池是多线程的一个编程方式，它避免了线程的创建和销毁的开销，提高了系统的性能。
-2. 增加到线程池中的任务是非长驻的，不能存在死循环，否则她会一直持有线程池中的某一个线程。
-3. TP线程池组件的开发仓库链接 [TP组件](https://gitee.com/RiceChen0/tp.git)
-
-
-<br/>关注微信公众号『Rice嵌入式开发技术分享』，后台回复“微信”添加作者微信，备注”入群“，便可邀请进入技术交流群。
-
-![](https://ricechen0.gitee.io/picture/logo/logo_.jpg)

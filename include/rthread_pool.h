@@ -1,36 +1,36 @@
 #ifndef __TP_MANAGE_H__
 #define __TP_MANAGE_H__
 
-#include "tp_def.h"
+#include "platform_def.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#define TP_THREAD_NAME_LEN        16
-#define TP_THREAD_PRIORITY        10
+#define RTP_NAME_LEN        16
+#define RTP_PRIORITY        10
 
-typedef void (*taskHandle)(void *argv);
+typedef void (*task_handle)(void *argv);
 
-typedef struct TpTask_ {
-    taskHandle handle;
+typedef struct rtp_task_ {
+    task_handle handle;
     void *argv;
-    struct TpTask_ *next;
-}TpTask;
+    struct rtp_task_ *next;
+}rtp_task;
 
 typedef struct {
-    TpThreadAttr attr;
-    TpThreadId *threadId;
-}TpThreadInfo;
+    struct pf_task_attr attr;
+    pf_task_id *thread_id;
+}rtp_thread_info;
 
 typedef struct {
-    TpMutexId queueLock;
-    TpSemId queueReady;
-    TpThreadInfo *threads;
-    TpTask *taskQueue;
-    uint8_t threadNum;
-    uint8_t waitTaskNum;
-}Tp;
+    pf_mutex_id queue_lock;
+    pf_sem_id queue_ready;
+    rtp_thread_info *threads;
+    rtp_task *task_queue;
+    uint8_t thread_num;
+    uint8_t wait_task_num;
+}rtp;
 
 /**
  * Create thread pool
@@ -43,7 +43,7 @@ typedef struct {
  *         TP_EOK: init success
  *         TP_ERROR: init failed
 */
-TpErrCode TpCreate(Tp *pool, const char *name, 
+pf_err_t rtp_create(rtp *pool, const char *name, 
                    uint32_t stackSize, uint8_t threadNum);
 
 /**
@@ -56,7 +56,7 @@ TpErrCode TpCreate(Tp *pool, const char *name,
  *         TP_EOK: init success
  *         TP_ERROR: init failed
 */
-TpErrCode TpAddTask(Tp *pool, taskHandle handle, void *argv);
+pf_err_t rtp_add_task(rtp *pool, task_handle handle, void *argv);
 
 /**
  * Destroy thread pool
@@ -66,7 +66,7 @@ TpErrCode TpAddTask(Tp *pool, taskHandle handle, void *argv);
  *         TP_EOK: init success
  *         TP_ERROR: init failed
 */
-TpErrCode TpDestroy(Tp *pool);
+pf_err_t rtp_destroy(rtp *pool);
 
 #ifdef __cplusplus
 }
