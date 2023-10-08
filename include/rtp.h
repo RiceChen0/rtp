@@ -1,7 +1,7 @@
-#ifndef __TP_MANAGE_H__
-#define __TP_MANAGE_H__
+#ifndef __RTP_H__
+#define __RTP_H__
 
-#include "platform_def.h"
+#include "rtp_def.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,13 +19,13 @@ typedef struct rtp_task_ {
 }rtp_task;
 
 typedef struct {
-    struct pf_task_attr attr;
-    pf_task_id *thread_id;
+    struct rtp_task_attr attr;
+    rtp_task_id *thread_id;
 }rtp_thread_info;
 
 typedef struct {
-    pf_mutex_id queue_lock;
-    pf_sem_id queue_ready;
+    rtp_mutex_id queue_lock;
+    rtp_sem_id queue_ready;
     rtp_thread_info *threads;
     rtp_task *task_queue;
     uint8_t thread_num;
@@ -40,10 +40,10 @@ typedef struct {
  * @param stackSize thread stack size
  * @param threadNum Number of threads in thread pool
  * @return create thread pool result. 
- *         TP_EOK: init success
- *         TP_ERROR: init failed
+ *         RTP_EOK: init success
+ *         RTP_ERROR: init failed
 */
-pf_err_t rtp_create(rtp *pool, const char *name, 
+rtp_err_t rtp_create(rtp *pool, const char *name, 
                    uint32_t stackSize, uint8_t threadNum);
 
 /**
@@ -53,20 +53,42 @@ pf_err_t rtp_create(rtp *pool, const char *name,
  * @param handl task handler
  * @param argv task parameter
  * @return add task result. 
- *         TP_EOK: init success
- *         TP_ERROR: init failed
+ *         RTP_EOK: init success
+ *         RTP_ERROR: init failed
 */
-pf_err_t rtp_add_task(rtp *pool, task_handle handle, void *argv);
+rtp_err_t rtp_add_task(rtp *pool, task_handle handle, void *argv);
+
+/**
+ * Suspend all threads in the thread pool
+ * 
+ * @param pool thread pool handle
+*/
+void rtp_suspend(rtp *pool);
+
+/**
+ * Resume all threads in the thread pool
+ * 
+ * @param pool thread pool handle
+*/
+void rtp_resume(rtp *pool);
+
+/**
+ * Get the number of tasks in the thread pool
+ * 
+ * @param pool thread pool handle
+ * @return task number.
+*/
+int rtp_wait_task_num(rtp *pool);
 
 /**
  * Destroy thread pool
  * 
  * @param pool thread pool handle
  * @return destroy thread pool result. 
- *         TP_EOK: init success
- *         TP_ERROR: init failed
+ *         RTP_EOK: init success
+ *         RTP_ERROR: init failed
 */
-pf_err_t rtp_destroy(rtp *pool);
+rtp_err_t rtp_destroy(rtp *pool);
 
 #ifdef __cplusplus
 }
